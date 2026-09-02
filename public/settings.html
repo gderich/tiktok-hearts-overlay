@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Configurar TikTok — Hearts Overlay</title>
+<style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;background:#0e0e12;color:#fff;font-family:Segoe UI,Arial,sans-serif;display:grid;place-items:center}.card{width:min(520px,92vw);background:#18181f;border:1px solid #30303a;border-radius:20px;padding:28px;box-shadow:0 20px 60px #0008}h1{margin:0 0 8px;font-size:25px}p{color:#aaa;margin:0 0 24px}.field{display:flex;gap:8px}input{flex:1;background:#0e0e12;border:1px solid #3b3b47;color:#fff;border-radius:10px;padding:13px 14px;font-size:16px;outline:none}input:focus{border-color:#25f4ee}button{border:0;border-radius:10px;padding:13px 18px;font-weight:700;cursor:pointer;background:linear-gradient(135deg,#25f4ee,#fe2c55);color:#fff}.status{margin-top:18px;padding:12px;border-radius:10px;background:#101015;color:#aaa}.ok{color:#43ff91}.error{color:#ff6b7d}.links{margin-top:18px;font-size:13px}.links a{color:#25f4ee;text-decoration:none}.hint{margin-top:16px;font-size:12px;color:#777}
+</style>
+</head>
+<body>
+<main class="card">
+<h1>⚙️ Configuração do overlay</h1>
+<p>Troque o perfil do TikTok sem editar o código ou o Render.</p>
+<div class="field"><input id="username" placeholder="@usuario" autocomplete="off"><button id="save">Conectar</button></div>
+<div class="status" id="status">Carregando...</div>
+<div class="links"><a href="/">← Voltar para o overlay</a></div>
+<div class="hint">Exemplo: <b>faladerix</b> ou <b>@faladerix</b>. O ranking atual será zerado ao trocar de streamer.</div>
+</main>
+<script>
+const input=document.getElementById('username'),button=document.getElementById('save'),status=document.getElementById('status');
+async function load(){try{const r=await fetch('/api/config');const d=await r.json();input.value=d.username||'';status.textContent=d.connected?'🟢 Conectado':'🟡 Desconectado';status.className='status '+(d.connected?'ok':'')}catch(e){status.textContent='Erro ao carregar configuração';status.className='status error'}}
+async function save(){const username=input.value.trim();if(!username){status.textContent='Digite o @username do streamer.';status.className='status error';return}button.disabled=true;button.textContent='Conectando...';status.textContent='Tentando conectar no TikTok...';status.className='status';try{const r=await fetch('/api/streamer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Falha');status.textContent='🟡 '+d.message+' Aguarde alguns segundos e atualize esta página.';status.className='status';}catch(e){status.textContent='❌ '+e.message;status.className='status error'}finally{button.disabled=false;button.textContent='Conectar'}}
+button.onclick=save;input.onkeydown=e=>{if(e.key==='Enter')save()};load();
+</script>
+</body>
+</html>
