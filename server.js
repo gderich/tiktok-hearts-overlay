@@ -45,6 +45,7 @@ let lastEvent = null;
 let decodedEvents = 0;
 let likeEvents = 0;
 let lastLikeSource = null;
+let lastLikeDebug = null;
 const processedLikeIds = new Set();
 
 const state = { connected: false, username, totalHearts: 0, viewerCount: 0, leaderboard: new Map(), lastLikeAt: 0 };
@@ -55,7 +56,7 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'overlay.html')));
 app.get('/settings', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'settings.html')));
 app.get('/api/config', (_req, res) => res.json({ username, connected: state.connected, demo: DEMO, hasEulerApiKey: Boolean(EULER_API_KEY), lastError }));
-app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastLikeAt: state.lastLikeAt, lastError, lastEvent, decodedEvents, likeEvents, lastLikeSource }));
+app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastLikeAt: state.lastLikeAt, lastError, lastEvent, decodedEvents, likeEvents, lastLikeSource, lastLikeDebug }));
 
 app.post('/api/streamer', async (req, res) => {
   const requested = cleanUsername(req.body?.username);
@@ -91,7 +92,7 @@ function registerHearts(uniqueId, nickname, profilePicture, hearts) {
 }
 function resetState() {
   state.totalHearts=0; state.viewerCount=0; state.lastLikeAt=0; state.leaderboard.clear();
-  processedLikeIds.clear(); lastEvent=null; decodedEvents=0; likeEvents=0; lastLikeSource=null;
+  processedLikeIds.clear(); lastEvent=null; decodedEvents=0; likeEvents=0; lastLikeSource=null; lastLikeDebug=null;
   broadcast();
 }
 function scheduleReconnect(delay = reconnectDelay) {
@@ -125,24 +126,86 @@ async function refreshRoomStats() {
   }
 }
 
+function firstObject(...values) {
+  return values.find(value => value && typeof value === 'object') || {};
+}
+
+function extractLikeData(data) {
+  const candidates = [
+    data,
+    data?.data,
+    data?.likeMessage,
+    data?.like,
+    data?.message,
+    data?.message?.data,
+    data?.decodedData,
+    data?.decodedData?.data,
+  ];
+
+  const root = candidates.find(value => value && typeof value === 'object' && (
+    value.likeCount !== undefined ||
+    value.like_count !== undefined ||
+    value.totalLikeCount !== undefined ||
+    value.total_like_count !== undefined ||
+    value.user ||
+    value.uniqueId ||
+    value.displayId
+  )) || data || {};
+
+  const user = firstObject(
+    root?.user,
+    root?.data?.user,
+    data?.user,
+    data?.data?.user,
+    data?.likeMessage?.user,
+    data?.like?.user
+  );
+
+  const uniqueId = cleanUsername(
+    root?.uniqueId ?? root?.displayId ?? root?.unique_id ?? root?.userId ?? root?.idStr ?? root?.id ??
+    user?.uniqueId ?? user?.displayId ?? user?.display_id ?? user?.unique_id ?? user?.userId ?? user?.idStr ?? user?.id ??
+    data?.uniqueId ?? data?.displayId ?? data?.unique_id ?? data?.userId ?? data?.idStr
+  );
+
+  const nickname = String(
+    root?.nickname ?? root?.nickName ?? root?.userName ??
+    user?.nickname ?? user?.nickName ?? user?.displayName ??
+    data?.nickname ?? data?.nickName ?? uniqueId
+  ).trim();
+
+  const profilePicture = root?.profilePictureUrl ?? root?.profile_picture_url ?? user?.profilePictureUrl ?? user?.profile_picture_url ?? data?.profilePictureUrl ?? null;
+  const hearts = number(root?.likeCount ?? root?.like_count ?? data?.likeCount ?? data?.like_count, 0);
+  const total = number(root?.totalLikeCount ?? root?.total_like_count ?? data?.totalLikeCount ?? data?.total_like_count, 0);
+  const msgId = root?.msgId ?? root?.msg_id ?? root?.common?.msgId ?? root?.common?.msg_id ?? data?.msgId ?? data?.messageId ?? data?.common?.msgId;
+
+  return { root, user, uniqueId, nickname, profilePicture, hearts, total, msgId };
+}
+
 function processLike(data, source='like') {
-  const root = data?.likeMessage || data?.like || data;
-  const user = root?.user || data?.user || data?.likeMessage?.user || {};
-  const uniqueId = root?.uniqueId || user?.uniqueId || data?.uniqueId;
-  const nickname = root?.nickname || user?.nickname || data?.nickname || uniqueId;
-  const profilePicture = root?.profilePictureUrl || user?.profilePictureUrl || data?.profilePictureUrl || null;
-  const hearts = number(root?.likeCount ?? user?.likeCount ?? data?.likeCount, 0);
-  const totalFromTikTok = number(root?.totalLikeCount ?? user?.totalLikeCount ?? data?.totalLikeCount, 0);
-  const msgId = root?.msgId || data?.msgId || data?.messageId;
-  const dedupeKey = msgId ? `${source}:${msgId}` : `${uniqueId}:${hearts}:${totalFromTikTok}`;
+  const extracted = extractLikeData(data);
+  const { root, user, uniqueId, nickname, profilePicture, hearts, total: totalFromTikTok, msgId } = extracted;
+  const dedupeKey = msgId ? `msg:${msgId}` : `${uniqueId}:${hearts}:${totalFromTikTok}`;
 
   if (processedLikeIds.has(dedupeKey)) return false;
   if (processedLikeIds.size > 5000) processedLikeIds.clear();
   processedLikeIds.add(dedupeKey);
 
-  console.log(`[LIKE:${source}] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok} | keys=${Object.keys(root||{}).join(',')}`);
+  lastLikeDebug = {
+    source,
+    rootKeys: Object.keys(root || {}).slice(0, 40),
+    userKeys: Object.keys(user || {}).slice(0, 40),
+    uniqueId: uniqueId || null,
+    nickname: nickname || null,
+    hearts,
+    totalLikeCount: totalFromTikTok,
+    msgId: msgId ? String(msgId) : null,
+  };
+
+  console.log(`[LIKE:${source}] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok} | rootKeys=${Object.keys(root||{}).join(',')} | userKeys=${Object.keys(user||{}).join(',')}`);
   likeEvents++;
   lastLikeSource=source;
+
+  if (totalFromTikTok > state.totalHearts) state.totalHearts = totalFromTikTok;
 
   if (!uniqueId || hearts <= 0) {
     broadcast();
@@ -150,7 +213,7 @@ function processLike(data, source='like') {
   }
 
   registerHearts(uniqueId, nickname, profilePicture, hearts);
-  state.totalHearts = totalFromTikTok > 0 ? Math.max(state.totalHearts, totalFromTikTok) : state.totalHearts + hearts;
+  if (totalFromTikTok <= 0) state.totalHearts += hearts;
   state.lastLikeAt = Date.now();
   broadcast();
   return true;
@@ -177,7 +240,7 @@ async function connectLive() {
       if (String(messageTypeName || '').toLowerCase().includes('like')) console.log(`[RAW LIKE] ${messageTypeName}`);
     });
     connection.on('websocketConnected', () => console.log('[OK] WebSocket TikTok aberto.'));
-    connection.on(WebcastEvent.ROOM_USER, data => { state.viewerCount=number(data?.viewerCount,state.viewerCount); broadcast(); });
+    connection.on(WebcastEvent.ROOM_USER, data => { state.viewerCount=number(data?.viewerCount ?? data?.userCount ?? data?.memberCount,state.viewerCount); broadcast(); });
     connection.on('disconnected', ({code,reason}={}) => {
       state.connected=false;
       if (statsTimer) { clearInterval(statsTimer); statsTimer=null; }
