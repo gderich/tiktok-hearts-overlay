@@ -16,6 +16,7 @@ const DEMO = String(process.env.DEMO || '').toLowerCase() === 'true';
 const app = express();
 app.disable('x-powered-by');
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'overlay.html')));
 app.get('/health', (_req, res) => res.status(200).json({ ok: true }));
 
 const server = http.createServer(app);
@@ -30,9 +31,7 @@ const state = {
 };
 
 function getRanking(limit = 10) {
-  return [...state.leaderboard.values()]
-    .sort((a, b) => b.hearts - a.hearts)
-    .slice(0, limit);
+  return [...state.leaderboard.values()].sort((a, b) => b.hearts - a.hearts).slice(0, limit);
 }
 
 function broadcastState() {
@@ -52,17 +51,14 @@ function toPositiveNumber(value, fallback = 0) {
 
 function registerHearts({ uniqueId, nickname, profilePicture, hearts }) {
   if (!uniqueId) return;
-
   const amount = toPositiveNumber(hearts, 1);
   if (!amount) return;
-
   const current = state.leaderboard.get(uniqueId) || {
     uniqueId,
     nickname: nickname || uniqueId,
     profilePicture: profilePicture || null,
     hearts: 0,
   };
-
   current.hearts += amount;
   if (nickname) current.nickname = nickname;
   if (profilePicture) current.profilePicture = profilePicture;
@@ -84,15 +80,13 @@ io.on('connection', (socket) => {
     viewerCount: state.viewerCount,
     ranking: getRanking(10),
   });
-
-  socket.on('reset', () => resetState());
+  socket.on('reset', resetState);
 });
 
 function startDemo() {
   console.log('[DEMO] Rodando em modo de demonstracao com dados falsos.');
   state.connected = true;
   state.username = 'modo-demo';
-
   const fakeUsers = [
     { uniqueId: 'ana.streams', nickname: 'Ana' },
     { uniqueId: 'joao_rj', nickname: 'João RJ' },
@@ -100,7 +94,6 @@ function startDemo() {
     { uniqueId: 'pedro99', nickname: 'Pedro' },
     { uniqueId: 'lu_fofa', nickname: 'Lu' },
   ];
-
   setInterval(() => {
     const user = fakeUsers[Math.floor(Math.random() * fakeUsers.length)];
     const hearts = Math.floor(Math.random() * 20) + 1;
@@ -108,21 +101,17 @@ function startDemo() {
     registerHearts({ ...user, hearts });
     broadcastState();
   }, 1200);
-
   broadcastState();
 }
 
 async function startLive() {
   if (!USERNAME) {
-    console.error('\n[ERRO] Defina TIKTOK_USERNAME no arquivo .env (sem o @).\n');
-    process.exitCode = 1;
+    console.error('[ERRO] Defina TIKTOK_USERNAME nas variáveis de ambiente.');
     return;
   }
 
   const connectionOptions = {};
-  if (process.env.EULER_API_KEY?.trim()) {
-    connectionOptions.signApiKey = process.env.EULER_API_KEY.trim();
-  }
+  if (process.env.EULER_API_KEY?.trim()) connectionOptions.signApiKey = process.env.EULER_API_KEY.trim();
 
   const connection = new TikTokLiveConnection(USERNAME, connectionOptions);
   let reconnectTimer = null;
@@ -144,7 +133,6 @@ async function startLive() {
     try {
       const connState = await connection.connect();
       state.connected = true;
-      state.username = USERNAME;
       console.log(`[OK] Conectado na live de @${USERNAME} (roomId ${connState.roomId})`);
       broadcastState();
     } catch (err) {
@@ -158,32 +146,21 @@ async function startLive() {
   }
 
   connection.on(WebcastEvent.LIKE, (data) => {
-    // tiktok-live-connector 2.x exposes these fields directly on the event.
     const user = data?.user || {};
     const uniqueId = user.uniqueId || data?.uniqueId || user.userId || data?.userId;
     const nickname = user.nickname || data?.nickname || uniqueId;
     const profilePicture = user.profilePictureUrl || data?.profilePictureUrl || null;
-    const hearts = toPositiveNumber(data?.likeCount, 1);
-
+    const hearts = toPositiveNumber(data?.likeCount ?? data?.count, 1);
     if (!uniqueId || !hearts) return;
 
-    // totalLikeCount is the stream-wide cumulative total.
-    const totalFromEvent = toPositiveNumber(data?.totalLikeCount, 0);
-    if (totalFromEvent > state.totalHearts) {
-      state.totalHearts = totalFromEvent;
-    } else {
-      state.totalHearts += hearts;
-    }
-
+    const totalFromEvent = toPositiveNumber(data?.totalLikeCount ?? data?.total, 0);
+    state.totalHearts = totalFromEvent > state.totalHearts ? totalFromEvent : state.totalHearts + hearts;
     registerHearts({ uniqueId, nickname, profilePicture, hearts });
     broadcastState();
   });
 
   connection.on(WebcastEvent.ROOM_USER, (data) => {
-    state.viewerCount = toPositiveNumber(
-      data?.viewerCount ?? data?.totalUser ?? data?.total,
-      state.viewerCount
-    );
+    state.viewerCount = toPositiveNumber(data?.viewerCount ?? data?.totalUser ?? data?.total, state.viewerCount);
     broadcastState();
   });
 
@@ -194,20 +171,12 @@ async function startLive() {
     scheduleReconnect();
   });
 
-  connection.on('error', (err) => {
-    console.error('[ERRO connection]', err?.message || err);
-  });
-
+  connection.on('error', (err) => console.error('[ERRO connection]', err?.message || err));
   await connect();
 }
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\nServidor do overlay rodando em http://localhost:${PORT}`);
-  console.log(`Browser Source: http://localhost:${PORT}/overlay.html?transparent=1\n`);
-
+  console.log(`Servidor do overlay rodando na porta ${PORT}`);
   if (DEMO) startDemo();
-  else startLive().catch((err) => {
-    console.error('[ERRO FATAL]', err);
-    process.exitCode = 1;
-  });
+  else startLive().catch((err) => console.error('[ERRO FATAL]', err));
 });
