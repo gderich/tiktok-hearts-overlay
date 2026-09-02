@@ -1,12 +1,12 @@
 {
   "name": "tiktok-hearts-overlay",
-  "version": "1.1.0",
-  "description": "Overlay de OBS que conta os corações da live do TikTok e mostra um ranking dos maiores contribuidores",
+  "version": "2.0.0",
+  "description": "Overlay OBS para TikTok LIVE com contador de corações e ranking em tempo real",
   "main": "server.js",
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "demo": "node server.js"
+    "demo": "node demo.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
