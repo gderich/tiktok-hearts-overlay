@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import http from 'node:http';
 import { Server } from 'socket.io';
-import { TikTokLiveConnection, WebcastEvent } from 'tiktok-live-connector';
+import { TikTokLiveConnection } from 'tiktok-live-connector';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +15,7 @@ const DEMO = String(process.env.DEMO || '').toLowerCase() === 'true';
 const RESET_TOKEN = String(process.env.RESET_TOKEN || '').trim();
 const EULER_API_KEY = String(process.env.EULER_API_KEY || '').trim();
 const MAX_RANKING = 50;
+const MAX_RECENT_LIKES = 25;
 
 function cleanUsername(value) { return String(value || '').trim().replace(/^@+/, '').replace(/[^a-zA-Z0-9._]/g, ''); }
 function loadUsername() {
@@ -36,7 +37,9 @@ let decodedEvents = 0;
 let likeEvents = 0;
 let lastLikeSource = null;
 let lastLikeDebug = null;
+let lastTikTokTotal = 0;
 const processedLikeIds = new Set();
+const recentLikes = [];
 
 const state = { connected: false, username, totalHearts: 0, viewerCount: 0, leaderboard: new Map(), lastLikeAt: 0 };
 const app = express();
@@ -46,7 +49,22 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'overlay.html')));
 app.get('/settings', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'settings.html')));
 app.get('/api/config', (_req, res) => res.json({ username, connected: state.connected, demo: DEMO, hasEulerApiKey: Boolean(EULER_API_KEY), lastError }));
-app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastLikeAt: state.lastLikeAt, lastError, lastEvent, decodedEvents, likeEvents, lastLikeSource, lastLikeDebug }));
+app.get('/health', (_req, res) => res.json({
+  ok: true,
+  connected: state.connected,
+  username,
+  totalHearts: state.totalHearts,
+  users: state.leaderboard.size,
+  lastLikeAt: state.lastLikeAt,
+  lastError,
+  lastEvent,
+  decodedEvents,
+  likeEvents,
+  lastLikeSource,
+  lastLikeDebug,
+  lastTikTokTotal,
+  recentLikes
+}));
 
 // Proxy de avatar: evita bloqueios do CDN do TikTok no navegador/OBS e mantem o URL fora do HTML.
 app.get('/avatar', async (req, res) => {
@@ -99,7 +117,7 @@ function registerHearts(uniqueId, nickname, profilePicture, hearts) {
 }
 function resetState() {
   state.totalHearts=0; state.viewerCount=0; state.lastLikeAt=0; state.leaderboard.clear();
-  processedLikeIds.clear(); lastEvent=null; decodedEvents=0; likeEvents=0; lastLikeSource=null; lastLikeDebug=null; broadcast();
+  processedLikeIds.clear(); recentLikes.length=0; lastTikTokTotal=0; lastEvent=null; decodedEvents=0; likeEvents=0; lastLikeSource=null; lastLikeDebug=null; broadcast();
 }
 function scheduleReconnect(delay = reconnectDelay) {
   if (reconnectTimer || connecting || !username || DEMO) return;
@@ -113,14 +131,33 @@ async function disconnectCurrent() {
   if (connection) { try { if (typeof connection.disconnect==='function') await connection.disconnect(); } catch (err) { console.warn('[AVISO] Erro desconectando:',err?.message||err); } }
   connection=null; state.connected=false;
 }
+function extractRoomLikeTotal(roomInfo) {
+  const candidates = [
+    roomInfo?.stats?.like_count,
+    roomInfo?.stats?.likeCount,
+    roomInfo?.stats?.total_like_count,
+    roomInfo?.stats?.totalLikeCount,
+    roomInfo?.like_count,
+    roomInfo?.likeCount,
+    roomInfo?.total_like_count,
+    roomInfo?.totalLikeCount,
+    roomInfo?.data?.stats?.like_count,
+    roomInfo?.data?.stats?.likeCount,
+    roomInfo?.data?.stats?.total_like_count,
+    roomInfo?.data?.stats?.totalLikeCount
+  ];
+  return Math.max(...candidates.map(value => number(value, 0)), 0);
+}
 async function refreshRoomStats() {
   if (!connection || !state.connected) return;
   try {
-    const roomInfo = await connection.fetchRoomInfo(); const stats = roomInfo?.stats || {};
-    const roomLikes = number(stats.like_count ?? stats.likeCount ?? roomInfo?.like_count ?? roomInfo?.likeCount, 0);
-    const viewers = number(stats.total_user ?? stats.totalUser ?? stats.user_count, state.viewerCount);
+    const roomInfo = await connection.fetchRoomInfo();
+    const roomLikes = extractRoomLikeTotal(roomInfo);
+    const viewers = number(roomInfo?.stats?.total_user ?? roomInfo?.stats?.totalUser ?? roomInfo?.stats?.user_count ?? roomInfo?.data?.stats?.total_user, state.viewerCount);
+    if (roomLikes > lastTikTokTotal) lastTikTokTotal = roomLikes;
     if (roomLikes > state.totalHearts) state.totalHearts = roomLikes;
-    if (viewers > 0) state.viewerCount = viewers; broadcast();
+    if (viewers > 0) state.viewerCount = viewers;
+    broadcast();
   } catch (err) { console.warn('[AVISO] Nao consegui atualizar estatisticas da sala:', err?.message || err); }
 }
 function firstObject(...values) { return values.find(value => value && typeof value === 'object') || {}; }
@@ -148,30 +185,94 @@ function extractLikeData(data) {
   const msgId = root?.msgId ?? root?.msg_id ?? root?.common?.msgId ?? root?.common?.msg_id ?? data?.msgId ?? data?.messageId ?? data?.common?.msgId;
   return { root, user, uniqueId, nickname, profilePicture, hearts, total, msgId };
 }
-function processLike(data, source='like') {
-  const extracted = extractLikeData(data); const {root,user,uniqueId,nickname,profilePicture,hearts,total:totalFromTikTok,msgId}=extracted;
+function rememberLikeBatch(entry) {
+  recentLikes.unshift(entry);
+  if (recentLikes.length > MAX_RECENT_LIKES) recentLikes.length = MAX_RECENT_LIKES;
+}
+function processLike(data, source='DECODED') {
+  const extracted = extractLikeData(data);
+  const {root,user,uniqueId,nickname,profilePicture,hearts,total:totalFromTikTok,msgId}=extracted;
+
+  // A mesma mensagem pode aparecer em diferentes camadas da biblioteca.
+  // O projeto agora processa LIKE somente pelo decodedData; o msgId fica como protecao extra.
   const dedupeKey = msgId ? `msg:${msgId}` : `${uniqueId}:${hearts}:${totalFromTikTok}`;
   if (processedLikeIds.has(dedupeKey)) return false;
-  if (processedLikeIds.size > 5000) processedLikeIds.clear(); processedLikeIds.add(dedupeKey);
-  lastLikeDebug={source,rootKeys:Object.keys(root||{}).slice(0,40),userKeys:Object.keys(user||{}).slice(0,40),uniqueId:uniqueId||null,nickname:nickname||null,hearts,totalLikeCount:totalFromTikTok,msgId:msgId?String(msgId):null,profilePicture:profilePicture||null};
-  console.log(`[LIKE:${source}] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok} | avatar=${profilePicture?'yes':'no'}`);
-  likeEvents++; lastLikeSource=source;
+  if (processedLikeIds.size > 5000) processedLikeIds.clear();
+  processedLikeIds.add(dedupeKey);
+
+  const previousTikTokTotal = lastTikTokTotal;
+  const totalDelta = previousTikTokTotal > 0 && totalFromTikTok > previousTikTokTotal ? totalFromTikTok - previousTikTokTotal : null;
+  if (totalFromTikTok > lastTikTokTotal) lastTikTokTotal = totalFromTikTok;
   if (totalFromTikTok > state.totalHearts) state.totalHearts=totalFromTikTok;
-  if (!uniqueId || hearts <= 0) { broadcast(); return false; }
+
+  lastLikeDebug={
+    source,
+    rootKeys:Object.keys(root||{}).slice(0,40),
+    userKeys:Object.keys(user||{}).slice(0,40),
+    uniqueId:uniqueId||null,
+    nickname:nickname||null,
+    hearts,
+    totalLikeCount:totalFromTikTok,
+    totalDelta,
+    msgId:msgId?String(msgId):null,
+    profilePicture:profilePicture||null
+  };
+
+  likeEvents++;
+  lastLikeSource=source;
+  const batch = {
+    at: Date.now(),
+    source,
+    uniqueId: uniqueId || null,
+    nickname: nickname || null,
+    batchCount: hearts,
+    cumulativeTotal: totalFromTikTok || null,
+    totalDelta,
+    msgId: msgId ? String(msgId) : null,
+    profilePicture: profilePicture || null
+  };
+  rememberLikeBatch(batch);
+
+  console.log(`[LIKE:${source}] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok} | delta=${totalDelta ?? '?'} | avatar=${profilePicture?'yes':'no'}`);
+  if (totalDelta !== null && hearts > 0 && totalDelta !== hearts) {
+    console.log(`[LIKE:INFO] Delta do total (${totalDelta}) diferente do lote do usuario (${hearts}); nao atribuiremos a diferenca ao usuario.`);
+  }
+
+  // O ranking representa apenas os lotes de likes que o TikTok efetivamente
+  // entregou com um usuario identificavel. Nao usamos a diferenca do total
+  // cumulativo para inventar likes de um usuario.
+  if (!uniqueId || hearts <= 0) {
+    broadcast();
+    return false;
+  }
+
   registerHearts(uniqueId,nickname,profilePicture,hearts);
-  if (totalFromTikTok <= 0) state.totalHearts+=hearts;
-  state.lastLikeAt=Date.now(); broadcast(); return true;
+  if (totalFromTikTok <= 0) {
+    state.totalHearts+=hearts;
+    lastTikTokTotal=state.totalHearts;
+  }
+  state.lastLikeAt=Date.now();
+  broadcast();
+  return true;
 }
 async function connectLive() {
   if (DEMO || !username || connecting || state.connected) return;
   connecting=true; lastError=null; broadcast();
   try {
     const options=EULER_API_KEY?{signApiKey:EULER_API_KEY}:{}; connection=new TikTokLiveConnection(username,options);
-    connection.on(WebcastEvent.LIKE,data=>processLike(data,'LIKE'));
-    connection.on('decodedData',(eventName,data)=>{ decodedEvents++; lastEvent=String(eventName||'unknown'); if(String(eventName||'').toLowerCase().includes('like')) processLike(data,'DECODED'); if(decodedEvents%20===0) broadcast(); });
+
+    // IMPORTANTE: nao processar WebcastEvent.LIKE e decodedData ao mesmo tempo.
+    // O decodedData contem o protobuf WebcastLikeMessage bruto e foi confirmado
+    // como a fonte que entrega count/total/msgId neste projeto.
+    connection.on('decodedData',(eventName,data)=>{
+      decodedEvents++;
+      lastEvent=String(eventName||'unknown');
+      if(String(eventName||'').toLowerCase().includes('like')) processLike(data,'DECODED');
+      if(decodedEvents%20===0) broadcast();
+    });
     connection.on('rawData',messageTypeName=>{ lastEvent=String(messageTypeName||'unknown'); if(String(messageTypeName||'').toLowerCase().includes('like')) console.log(`[RAW LIKE] ${messageTypeName}`); });
     connection.on('websocketConnected',()=>console.log('[OK] WebSocket TikTok aberto.'));
-    connection.on(WebcastEvent.ROOM_USER,data=>{state.viewerCount=number(data?.viewerCount??data?.userCount??data?.memberCount,state.viewerCount);broadcast();});
+    connection.on('roomUser',data=>{state.viewerCount=number(data?.viewerCount??data?.userCount??data?.memberCount,state.viewerCount);broadcast();});
     connection.on('disconnected',({code,reason}={})=>{state.connected=false;if(statsTimer){clearInterval(statsTimer);statsTimer=null;}lastError=`Desconectado${code?` (${code})`:''}${reason?`: ${reason}`:''}`;console.warn('[AVISO]',lastError);broadcast();scheduleReconnect();});
     connection.on('error',err=>{lastError=err?.message||String(err);console.error('[ERRO TikTok]',lastError);broadcast();});
     console.log(`[INFO] Procurando a live de @${username}...`); const live=await connection.fetchIsLive(); console.log(`[INFO] fetchIsLive @${username}: ${live}`); if(!live) throw new Error(`@${username} nao parece estar ao vivo para o TikTok neste momento. Abra a live no TikTok e tente novamente.`);
