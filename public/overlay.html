@@ -27,10 +27,11 @@
   const p=new URLSearchParams(location.search); if(p.get('transparent')==='1') document.body.classList.add('transparent');
   const n=Number.parseInt(p.get('rows')||'10',10); const rows=Number.isFinite(n)?Math.min(Math.max(n,1),10):10;
   const total=document.getElementById('total'),heart=document.getElementById('heart'),dot=document.getElementById('dot'),status=document.getElementById('status'),user=document.getElementById('user'),list=document.getElementById('list'),footer=document.getElementById('footer'),surpass=document.getElementById('surpass');
-  let previous=0,previousRanking=[],announceTimer=null;
+  let previous=0,previousRanking=[];
   const fmt=v=>Number(v||0).toLocaleString('pt-BR');
   const initials=name=>(String(name||'?').trim().slice(0,2)||'?').toUpperCase();
   function announce(text){surpass.textContent=text;surpass.classList.remove('show');void surpass.offsetWidth;surpass.classList.add('show');}
+  function avatarSrc(url){return '/avatar?url='+encodeURIComponent(url);}
   function render(s){
     const value=Number(s?.totalHearts||0); total.textContent=fmt(value);
     if(value!==previous){heart.classList.remove('pop');void heart.offsetWidth;heart.classList.add('pop');previous=value;}
@@ -43,7 +44,13 @@
       const oldPos=oldPositions.get(item.uniqueId); if(oldPos && oldPos!==pos) row.classList.add('bump');
       const place=document.createElement('div');place.className='pos';place.textContent=pos===1?'🥇':pos===2?'🥈':pos===3?'🥉':String(pos);
       const avatar=document.createElement('div');avatar.className='avatar';const nick=item.nickname||item.uniqueId||'?';avatar.textContent=initials(nick);
-      if(item.profilePicture){const img=document.createElement('img');img.alt='';img.referrerPolicy='no-referrer';img.src=item.profilePicture;img.onerror=()=>{img.remove();avatar.textContent=initials(nick)};avatar.replaceChildren(img);}
+      if(item.profilePicture){
+        const img=document.createElement('img');img.alt='';img.referrerPolicy='no-referrer';
+        let triedDirect=false;
+        img.src=avatarSrc(item.profilePicture);
+        img.onerror=()=>{ if(!triedDirect){triedDirect=true;img.src=item.profilePicture;return;} img.remove();avatar.textContent=initials(nick); };
+        avatar.replaceChildren(img);
+      }
       const namebox=document.createElement('div');namebox.className='namebox';const name=document.createElement('div');name.className='name';name.textContent=nick;const handle=document.createElement('div');handle.className='handle';handle.textContent='@'+(item.uniqueId||'');namebox.append(name,handle);
       const score=document.createElement('div');score.className='score';score.textContent='❤️ '+fmt(item.hearts);row.append(place,avatar,namebox,score);list.appendChild(row);
     });
