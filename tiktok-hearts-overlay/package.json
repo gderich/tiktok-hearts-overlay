@@ -1,0 +1,20 @@
+{
+  "name": "tiktok-hearts-overlay",
+  "version": "1.0.0",
+  "description": "Overlay de OBS que conta os coracoes (likes) da sua live de TikTok e mostra um ranking dos maiores contribuintes",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "DEMO=true node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5",
+    "tiktok-live-connector": "^2.0.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

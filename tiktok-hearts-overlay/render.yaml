@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: tiktok-hearts-overlay
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: TIKTOK_USERNAME
+        sync: false
+      - key: EULER_API_KEY
+        sync: false
+      - key: DEMO
+        value: "false"
