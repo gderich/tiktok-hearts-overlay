@@ -48,6 +48,29 @@ app.get('/settings', (_req, res) => res.sendFile(path.join(__dirname, 'public', 
 app.get('/api/config', (_req, res) => res.json({ username, connected: state.connected, demo: DEMO, hasEulerApiKey: Boolean(EULER_API_KEY), lastError }));
 app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastLikeAt: state.lastLikeAt, lastError, lastEvent, decodedEvents, likeEvents, lastLikeSource, lastLikeDebug }));
 
+// Proxy de avatar: evita bloqueios do CDN do TikTok no navegador/OBS e mantem o URL fora do HTML.
+app.get('/avatar', async (req, res) => {
+  try {
+    const raw = String(req.query.url || '').trim();
+    const target = new URL(raw);
+    const host = target.hostname.toLowerCase();
+    const allowed = host === 'tiktokcdn.com' || host.endsWith('.tiktokcdn.com') || host === 'tiktok.com' || host.endsWith('.tiktok.com');
+    if (!allowed) return res.status(400).end();
+    const response = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    if (!response.ok) return res.status(response.status).end();
+    const contentType = response.headers.get('content-type') || 'image/webp';
+    if (!contentType.startsWith('image/')) return res.status(415).end();
+    const buffer = Buffer.from(await response.arrayBuffer());
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.end(buffer);
+  } catch (err) {
+    console.warn('[AVISO] Falha ao buscar avatar:', err?.message || err);
+    return res.status(404).end();
+  }
+});
+
 app.post('/api/streamer', async (req, res) => {
   const requested = cleanUsername(req.body?.username);
   if (!requested || requested.length < 2) return res.status(400).json({ ok: false, error: 'Informe um @username valido.' });
@@ -101,13 +124,25 @@ async function refreshRoomStats() {
   } catch (err) { console.warn('[AVISO] Nao consegui atualizar estatisticas da sala:', err?.message || err); }
 }
 function firstObject(...values) { return values.find(value => value && typeof value === 'object') || {}; }
+function imageUrl(value) {
+  if (!value) return null;
+  if (typeof value === 'string') return /^https?:\/\//i.test(value) ? value : null;
+  if (Array.isArray(value)) return value.map(imageUrl).find(Boolean) || null;
+  if (typeof value !== 'object') return null;
+  const candidates = [value.urlList, value.url_list, value.urls, value.url, value.openWebUrl, value.open_web_url, value.uri];
+  for (const candidate of candidates) {
+    const found = imageUrl(candidate);
+    if (found) return found;
+  }
+  return null;
+}
 function extractLikeData(data) {
   const candidates = [data,data?.data,data?.likeMessage,data?.like,data?.message,data?.message?.data,data?.decodedData,data?.decodedData?.data];
   const root = candidates.find(value => value && typeof value === 'object' && (value.likeCount !== undefined || value.like_count !== undefined || value.totalLikeCount !== undefined || value.total_like_count !== undefined || value.count !== undefined || value.total !== undefined || value.user || value.uniqueId || value.displayId)) || data || {};
   const user = firstObject(root?.user,root?.data?.user,data?.user,data?.data?.user,data?.likeMessage?.user,data?.like?.user);
   const uniqueId = cleanUsername(root?.uniqueId ?? root?.displayId ?? root?.unique_id ?? root?.userId ?? root?.idStr ?? root?.id ?? user?.uniqueId ?? user?.displayId ?? user?.display_id ?? user?.unique_id ?? user?.userId ?? user?.idStr ?? user?.id ?? data?.uniqueId ?? data?.displayId ?? data?.unique_id ?? data?.userId ?? data?.idStr);
   const nickname = String(root?.nickname ?? root?.nickName ?? root?.userName ?? user?.nickname ?? user?.nickName ?? user?.displayName ?? data?.nickname ?? data?.nickName ?? uniqueId).trim();
-  const profilePicture = root?.profilePictureUrl ?? root?.profile_picture_url ?? root?.profilePicture ?? user?.profilePictureUrl ?? user?.profile_picture_url ?? user?.avatarThumb ?? user?.avatarMedium ?? user?.avatarLarge ?? data?.profilePictureUrl ?? data?.profilePicture ?? null;
+  const profilePicture = imageUrl(root?.profilePictureUrl ?? root?.profile_picture_url ?? root?.profilePicture ?? user?.profilePictureUrl ?? user?.profile_picture_url ?? user?.avatarThumb ?? user?.avatarMedium ?? user?.avatarLarge ?? data?.profilePictureUrl ?? data?.profilePicture);
   const hearts = number(root?.likeCount ?? root?.like_count ?? root?.count ?? data?.likeCount ?? data?.like_count ?? data?.count, 0);
   const total = number(root?.totalLikeCount ?? root?.total_like_count ?? root?.total ?? data?.totalLikeCount ?? data?.total_like_count ?? data?.total, 0);
   const msgId = root?.msgId ?? root?.msg_id ?? root?.common?.msgId ?? root?.common?.msg_id ?? data?.msgId ?? data?.messageId ?? data?.common?.msgId;
