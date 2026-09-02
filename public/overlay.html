@@ -1,13 +1,100 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8" />
-<title>Overlay de Corações — TikTok Live</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TikTok Hearts — Ranking</title>
 <style>
-:root{--cyan:#25F4EE;--pink:#FE2C55;--dark:#0e0e12}*{box-sizing:border-box}html,body{margin:0;padding:0;width:100%;height:100%;background:var(--dark);font-family:'Segoe UI',-apple-system,Helvetica,Arial,sans-serif;overflow:hidden}body.transparent{background:transparent}.wrap{display:flex;flex-direction:column;gap:14px;padding:18px;width:340px}.counter{display:flex;align-items:center;gap:12px;background:linear-gradient(135deg,rgba(254,44,85,.92),rgba(37,244,238,.85));border-radius:16px;padding:14px 18px;box-shadow:0 6px 24px rgba(0,0,0,.35)}.counter .heart-icon{font-size:34px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));transform-origin:center}.counter .heart-icon.pop{animation:pop 380ms ease-out}@keyframes pop{0%{transform:scale(1)}35%{transform:scale(1.5) rotate(-8deg)}100%{transform:scale(1)}}.numbers{line-height:1.1}.total{font-size:30px;font-weight:800;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,.35);font-variant-numeric:tabular-nums}.label{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:rgba(255,255,255,.85);font-weight:600}.status-dot{margin-left:auto;width:10px;height:10px;border-radius:50%;background:#ff5757;box-shadow:0 0 6px #ff5757}.status-dot.live{background:#37ff8b;box-shadow:0 0 8px #37ff8b;animation:blink 1.6s infinite}@keyframes blink{0%,100%{opacity:1}50%{opacity:.45}}.board{background:rgba(14,14,18,.82);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:12px 12px 6px;box-shadow:0 6px 24px rgba(0,0,0,.35)}.board h2{margin:2px 6px 10px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--cyan);font-weight:700}.row{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:10px;margin-bottom:6px;background:rgba(255,255,255,.04);transition:transform 320ms ease,background 320ms ease}.row.rank-1{background:linear-gradient(90deg,rgba(255,215,0,.22),rgba(255,255,255,.04))}.row.rank-2{background:linear-gradient(90deg,rgba(192,192,192,.20),rgba(255,255,255,.04))}.row.rank-3{background:linear-gradient(90deg,rgba(205,127,50,.20),rgba(255,255,255,.04))}.rank-num{width:22px;text-align:center;font-weight:800;color:rgba(255,255,255,.6);font-size:14px}.rank-1 .rank-num::before{content:'🥇';font-size:16px}.rank-2 .rank-num::before{content:'🥈';font-size:16px}.rank-3 .rank-num::before{content:'🥉';font-size:16px}.rank-1 .rank-num,.rank-2 .rank-num,.rank-3 .rank-num{font-size:0}.avatar{width:30px;height:30px;border-radius:50%;background:linear-gradient(135deg,var(--pink),var(--cyan));display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;overflow:hidden}.avatar img{width:100%;height:100%;object-fit:cover}.name{flex:1;color:#fff;font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hearts{font-size:13px;font-weight:700;color:var(--pink);display:flex;align-items:center;gap:3px;font-variant-numeric:tabular-nums}.empty{color:rgba(255,255,255,.45);font-size:12px;padding:10px 8px 14px;text-align:center}
+:root{--pink:#fe2c55;--cyan:#25f4ee;--panel:rgba(12,12,18,.88);--text:#fff;--muted:rgba(255,255,255,.58)}
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;font-family:Inter,"Segoe UI",Arial,sans-serif;background:#090a0f;color:var(--text)}
+body.transparent{background:transparent}.wrap{width:390px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.top{display:flex;align-items:center;gap:12px;padding:13px 15px;border-radius:18px;background:linear-gradient(135deg,rgba(254,44,85,.95),rgba(110,42,150,.92) 52%,rgba(37,244,238,.9));box-shadow:0 10px 30px rgba(0,0,0,.3)}
+.heart{font-size:38px;line-height:1;filter:drop-shadow(0 3px 5px rgba(0,0,0,.3));animation:pulse 1.7s ease-in-out infinite}.heart.pop{animation:pop .38s ease-out}
+@keyframes pulse{50%{transform:scale(1.06)}}@keyframes pop{0%{transform:scale(1)}35%{transform:scale(1.55) rotate(-8deg)}100%{transform:scale(1)}}
+.total{font-size:31px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums}.caption{margin-top:4px;font-size:11px;text-transform:uppercase;letter-spacing:.08em;font-weight:700;opacity:.86}.live{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em}.dot{width:9px;height:9px;border-radius:50%;background:#ff5b5b;box-shadow:0 0 8px #ff5b5b}.dot.on{background:#44ff91;box-shadow:0 0 10px #44ff91}
+.board{padding:12px;border-radius:18px;background:var(--panel);border:1px solid rgba(255,255,255,.1);box-shadow:0 10px 30px rgba(0,0,0,.28);backdrop-filter:blur(8px)}
+.header{display:flex;justify-content:space-between;align-items:center;margin:1px 5px 10px}.title{font-size:13px;font-weight:900;text-transform:uppercase;letter-spacing:.09em;color:var(--cyan)}.subtitle{font-size:10px;color:var(--muted)}
+.row{display:flex;align-items:center;gap:9px;min-height:48px;margin-bottom:7px;padding:6px 8px;border-radius:12px;background:rgba(255,255,255,.045);border:1px solid transparent;transition:transform .25s,background .25s}.row.top1{background:linear-gradient(90deg,rgba(255,203,65,.2),rgba(255,255,255,.04));border-color:rgba(255,215,0,.2)}.row.top2{background:linear-gradient(90deg,rgba(200,205,215,.16),rgba(255,255,255,.04))}.row.top3{background:linear-gradient(90deg,rgba(207,137,75,.16),rgba(255,255,255,.04))}
+.pos{width:25px;text-align:center;font-size:13px;font-weight:900;color:rgba(255,255,255,.6)}.avatar{width:34px;height:34px;flex:0 0 34px;border-radius:50%;display:grid;place-items:center;overflow:hidden;background:linear-gradient(135deg,var(--pink),var(--cyan));font-size:11px;font-weight:900}.avatar img{width:100%;height:100%;object-fit:cover}.name{min-width:0;flex:1;font-size:14px;font-weight:750;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.score{font-size:12px;font-weight:900;color:#ff6683;white-space:nowrap;font-variant-numeric:tabular-nums}.empty{padding:18px 6px;text-align:center;color:var(--muted);font-size:12px}.error{color:#ff8da4}
 </style>
 </head>
-<body><div class="wrap"><div class="counter"><div class="heart-icon" id="heartIcon">❤️</div><div class="numbers"><div class="total" id="totalHearts">0</div><div class="label">corações na live</div></div><div class="status-dot" id="statusDot" title="status da conexão"></div></div><div class="board"><h2>🏆 Ranking de corações</h2><div id="rankingList"><div class="empty">Aguardando corações...</div></div></div></div>
-<script src="/socket.io/socket.io.js"></script><script>
-const params=new URLSearchParams(location.search);if(params.get('transparent')==='1')document.body.classList.add('transparent');const requestedRows=Number.parseInt(params.get('rows')||'10',10);const maxRows=Number.isFinite(requestedRows)?Math.min(Math.max(requestedRows,1),10):10;const socket=io();let resetSent=false;if(params.get('reset')==='1')socket.on('connect',()=>{if(!resetSent){resetSent=true;socket.emit('reset')}});const totalEl=document.getElementById('totalHearts'),heartIcon=document.getElementById('heartIcon'),statusDot=document.getElementById('statusDot'),rankingList=document.getElementById('rankingList');let lastTotal=0;function initials(name){return(name||'?').trim().slice(0,2).toUpperCase()}function render(data){const newTotal=Number(data.totalHearts||0);if(newTotal!==lastTotal){totalEl.textContent=newTotal.toLocaleString('pt-BR');heartIcon.classList.remove('pop');void heartIcon.offsetWidth;heartIcon.classList.add('pop');lastTotal=newTotal}statusDot.classList.toggle('live',!!data.connected);statusDot.title=data.connected?`Conectado em @${data.username}`:'Desconectado — tentando reconectar';const ranking=(data.ranking||[]).slice(0,maxRows);if(!ranking.length){rankingList.innerHTML='<div class="empty">Aguardando corações...</div>';return}rankingList.replaceChildren();ranking.forEach((u,i)=>{const rank=i+1,row=document.createElement('div');row.className=`row rank-${rank}`;const rankEl=document.createElement('div');rankEl.className='rank-num';rankEl.textContent=String(rank);const avatar=document.createElement('div');avatar.className='avatar';const fallback=initials(u.nickname||u.uniqueId);if(u.profilePicture){const img=document.createElement('img');img.src=u.profilePicture;img.alt='';img.referrerPolicy='no-referrer';img.onerror=()=>{avatar.replaceChildren();avatar.textContent=fallback};avatar.appendChild(img)}else avatar.textContent=fallback;const name=document.createElement('div');name.className='name';name.textContent=u.nickname||u.uniqueId||'?';const hearts=document.createElement('div');hearts.className='hearts';hearts.textContent=`❤️ ${Number(u.hearts||0).toLocaleString('pt-BR')}`;row.append(rankEl,avatar,name,hearts);rankingList.appendChild(row)})}socket.on('state',render);
-</script></body></html>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div id="heart" class="heart">❤️</div>
+    <div><div id="total" class="total">0</div><div class="caption">corações nesta live</div></div>
+    <div class="live"><span id="dot" class="dot"></span><span id="status">offline</span></div>
+  </div>
+  <div class="board">
+    <div class="header"><div class="title">🏆 Ranking</div><div id="user" class="subtitle"></div></div>
+    <div id="list"><div class="empty">Aguardando os primeiros corações...</div></div>
+  </div>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+(() => {
+  const p = new URLSearchParams(location.search);
+  if (p.get('transparent') === '1') document.body.classList.add('transparent');
+  const n = Number.parseInt(p.get('rows') || '10', 10);
+  const rows = Number.isFinite(n) ? Math.min(Math.max(n, 1), 10) : 10;
+  const total = document.getElementById('total');
+  const heart = document.getElementById('heart');
+  const dot = document.getElementById('dot');
+  const status = document.getElementById('status');
+  const user = document.getElementById('user');
+  const list = document.getElementById('list');
+  let previous = 0;
+
+  const fmt = v => Number(v || 0).toLocaleString('pt-BR');
+  const initials = name => (String(name || '?').trim().slice(0, 2) || '?').toUpperCase();
+
+  function render(s) {
+    const value = Number(s?.totalHearts || 0);
+    total.textContent = fmt(value);
+    if (value !== previous) {
+      heart.classList.remove('pop'); void heart.offsetWidth; heart.classList.add('pop');
+      previous = value;
+    }
+    const connected = !!s?.connected;
+    dot.classList.toggle('on', connected);
+    status.textContent = connected ? 'ao vivo' : 'conectando';
+    user.textContent = s?.username ? '@' + s.username : '';
+
+    const ranking = Array.isArray(s?.ranking) ? s.ranking.slice(0, rows) : [];
+    list.replaceChildren();
+    if (!ranking.length) {
+      const empty = document.createElement('div'); empty.className = 'empty';
+      empty.textContent = connected ? 'Aguardando os primeiros corações...' : 'Conectando ao TikTok...';
+      list.appendChild(empty); return;
+    }
+
+    ranking.forEach((item, i) => {
+      const pos = i + 1;
+      const row = document.createElement('div');
+      row.className = 'row ' + (pos <= 3 ? 'top' + pos : '');
+
+      const place = document.createElement('div'); place.className = 'pos';
+      place.textContent = pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : String(pos);
+
+      const avatar = document.createElement('div'); avatar.className = 'avatar';
+      const nick = item.nickname || item.uniqueId || '?';
+      avatar.textContent = initials(nick);
+      if (item.profilePicture) {
+        const img = document.createElement('img'); img.alt = ''; img.referrerPolicy = 'no-referrer'; img.src = item.profilePicture;
+        img.onerror = () => { img.remove(); avatar.textContent = initials(nick); };
+        avatar.replaceChildren(img);
+      }
+
+      const name = document.createElement('div'); name.className = 'name'; name.textContent = nick;
+      const score = document.createElement('div'); score.className = 'score'; score.textContent = '❤️ ' + fmt(item.hearts);
+      row.append(place, avatar, name, score); list.appendChild(row);
+    });
+  }
+
+  const socket = io({ transports: ['websocket', 'polling'], reconnection: true, reconnectionAttempts: Infinity, reconnectionDelay: 1000, reconnectionDelayMax: 5000 });
+  socket.on('state', render);
+  socket.on('connect_error', () => { status.textContent = 'reconectando'; });
+})();
+</script>
+</body>
+</html>
