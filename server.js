@@ -41,6 +41,11 @@ let statsTimer = null;
 let connecting = false;
 let reconnectDelay = 5000;
 let lastError = null;
+let lastEvent = null;
+let decodedEvents = 0;
+let likeEvents = 0;
+let lastLikeSource = null;
+const processedLikeIds = new Set();
 
 const state = { connected: false, username, totalHearts: 0, viewerCount: 0, leaderboard: new Map(), lastLikeAt: 0 };
 const app = express();
@@ -50,7 +55,7 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'overlay.html')));
 app.get('/settings', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'settings.html')));
 app.get('/api/config', (_req, res) => res.json({ username, connected: state.connected, demo: DEMO, hasEulerApiKey: Boolean(EULER_API_KEY), lastError }));
-app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastLikeAt: state.lastLikeAt, lastError }));
+app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastLikeAt: state.lastLikeAt, lastError, lastEvent, decodedEvents, likeEvents, lastLikeSource }));
 
 app.post('/api/streamer', async (req, res) => {
   const requested = cleanUsername(req.body?.username);
@@ -74,7 +79,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, pingInterval: 25000, pingTimeout: 20000 });
 function number(value, fallback = 0) { const n = Number(value); return Number.isFinite(n) && n >= 0 ? n : fallback; }
 function getRanking() { return [...state.leaderboard.values()].sort((a,b) => b.hearts-a.hearts).slice(0, MAX_RANKING); }
-function snapshot() { return { connected: state.connected, username: state.username, totalHearts: state.totalHearts, viewerCount: state.viewerCount, lastLikeAt: state.lastLikeAt, ranking: getRanking(), lastError }; }
+function snapshot() { return { connected: state.connected, username: state.username, totalHearts: state.totalHearts, viewerCount: state.viewerCount, lastLikeAt: state.lastLikeAt, ranking: getRanking(), lastError, lastEvent, decodedEvents, likeEvents, lastLikeSource }; }
 function broadcast() { io.emit('state', snapshot()); }
 function registerHearts(uniqueId, nickname, profilePicture, hearts) {
   if (!uniqueId || hearts <= 0) return;
@@ -84,7 +89,11 @@ function registerHearts(uniqueId, nickname, profilePicture, hearts) {
   if (profilePicture) current.profilePicture = profilePicture;
   state.leaderboard.set(uniqueId, current);
 }
-function resetState() { state.totalHearts=0; state.viewerCount=0; state.lastLikeAt=0; state.leaderboard.clear(); broadcast(); }
+function resetState() {
+  state.totalHearts=0; state.viewerCount=0; state.lastLikeAt=0; state.leaderboard.clear();
+  processedLikeIds.clear(); lastEvent=null; decodedEvents=0; likeEvents=0; lastLikeSource=null;
+  broadcast();
+}
 function scheduleReconnect(delay = reconnectDelay) {
   if (reconnectTimer || connecting || !username || DEMO) return;
   reconnectTimer = setTimeout(() => { reconnectTimer=null; connectLive(); }, Math.min(delay,60000));
@@ -103,8 +112,8 @@ async function refreshRoomStats() {
   try {
     const roomInfo = await connection.fetchRoomInfo();
     const stats = roomInfo?.stats || {};
-    const roomLikes = number(stats.like_count, 0);
-    const viewers = number(stats.total_user, state.viewerCount);
+    const roomLikes = number(stats.like_count ?? stats.likeCount ?? roomInfo?.like_count ?? roomInfo?.likeCount, 0);
+    const viewers = number(stats.total_user ?? stats.totalUser ?? stats.user_count, state.viewerCount);
     if (roomLikes > state.totalHearts) {
       console.log(`[STATS] TikTok informa ${roomLikes} likes totais.`);
       state.totalHearts = roomLikes;
@@ -116,6 +125,37 @@ async function refreshRoomStats() {
   }
 }
 
+function processLike(data, source='like') {
+  const root = data?.likeMessage || data?.like || data;
+  const user = root?.user || data?.user || data?.likeMessage?.user || {};
+  const uniqueId = root?.uniqueId || user?.uniqueId || data?.uniqueId;
+  const nickname = root?.nickname || user?.nickname || data?.nickname || uniqueId;
+  const profilePicture = root?.profilePictureUrl || user?.profilePictureUrl || data?.profilePictureUrl || null;
+  const hearts = number(root?.likeCount ?? user?.likeCount ?? data?.likeCount, 0);
+  const totalFromTikTok = number(root?.totalLikeCount ?? user?.totalLikeCount ?? data?.totalLikeCount, 0);
+  const msgId = root?.msgId || data?.msgId || data?.messageId;
+  const dedupeKey = msgId ? `${source}:${msgId}` : `${uniqueId}:${hearts}:${totalFromTikTok}`;
+
+  if (processedLikeIds.has(dedupeKey)) return false;
+  if (processedLikeIds.size > 5000) processedLikeIds.clear();
+  processedLikeIds.add(dedupeKey);
+
+  console.log(`[LIKE:${source}] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok} | keys=${Object.keys(root||{}).join(',')}`);
+  likeEvents++;
+  lastLikeSource=source;
+
+  if (!uniqueId || hearts <= 0) {
+    broadcast();
+    return false;
+  }
+
+  registerHearts(uniqueId, nickname, profilePicture, hearts);
+  state.totalHearts = totalFromTikTok > 0 ? Math.max(state.totalHearts, totalFromTikTok) : state.totalHearts + hearts;
+  state.lastLikeAt = Date.now();
+  broadcast();
+  return true;
+}
+
 async function connectLive() {
   if (DEMO || !username || connecting || state.connected) return;
   connecting=true; lastError=null; broadcast();
@@ -123,20 +163,20 @@ async function connectLive() {
     const options = EULER_API_KEY ? { signApiKey: EULER_API_KEY } : {};
     connection = new TikTokLiveConnection(username, options);
 
-    connection.on(WebcastEvent.LIKE, data => {
-      const uniqueId=data?.uniqueId || data?.user?.uniqueId || data?.user?.user?.uniqueId;
-      const nickname=data?.nickname || data?.user?.nickname || data?.user?.user?.nickname || uniqueId;
-      const profilePicture=data?.profilePictureUrl || data?.user?.profilePictureUrl || data?.user?.user?.profilePictureUrl || null;
-      const hearts=number(data?.likeCount ?? data?.user?.likeCount ?? data?.user?.user?.likeCount,0);
-      const totalFromTikTok=number(data?.totalLikeCount ?? data?.user?.totalLikeCount,0);
-      console.log(`[LIKE] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok}`);
-      if (!uniqueId || hearts<=0) return;
-      registerHearts(uniqueId,nickname,profilePicture,hearts);
-      state.totalHearts=totalFromTikTok>0?Math.max(state.totalHearts,totalFromTikTok):state.totalHearts+hearts;
-      state.lastLikeAt=Date.now();
-      broadcast();
+    connection.on(WebcastEvent.LIKE, data => processLike(data, 'LIKE'));
+    connection.on('decodedData', (eventName, data) => {
+      decodedEvents++;
+      lastEvent=String(eventName || 'unknown');
+      if (String(eventName || '').toLowerCase() === 'like' || String(eventName || '').toLowerCase().includes('like')) {
+        processLike(data, 'DECODED');
+      }
+      if (decodedEvents % 20 === 0) broadcast();
     });
-
+    connection.on('rawData', (messageTypeName) => {
+      lastEvent=String(messageTypeName || 'unknown');
+      if (String(messageTypeName || '').toLowerCase().includes('like')) console.log(`[RAW LIKE] ${messageTypeName}`);
+    });
+    connection.on('websocketConnected', () => console.log('[OK] WebSocket TikTok aberto.'));
     connection.on(WebcastEvent.ROOM_USER, data => { state.viewerCount=number(data?.viewerCount,state.viewerCount); broadcast(); });
     connection.on('disconnected', ({code,reason}={}) => {
       state.connected=false;
@@ -149,9 +189,7 @@ async function connectLive() {
     console.log(`[INFO] Procurando a live de @${username}...`);
     const live = await connection.fetchIsLive();
     console.log(`[INFO] fetchIsLive @${username}: ${live}`);
-    if (!live) {
-      throw new Error(`@${username} nao parece estar ao vivo para o TikTok neste momento. Abra a live no TikTok e tente novamente.`);
-    }
+    if (!live) throw new Error(`@${username} nao parece estar ao vivo para o TikTok neste momento. Abra a live no TikTok e tente novamente.`);
 
     const result=await connection.connect();
     state.connected=true; state.username=username; reconnectDelay=5000; lastError=null;
