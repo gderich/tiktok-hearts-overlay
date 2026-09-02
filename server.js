@@ -16,23 +16,13 @@ const RESET_TOKEN = String(process.env.RESET_TOKEN || '').trim();
 const EULER_API_KEY = String(process.env.EULER_API_KEY || '').trim();
 const MAX_RANKING = 50;
 
-function cleanUsername(value) {
-  return String(value || '').trim().replace(/^@+/, '').replace(/[^a-zA-Z0-9._]/g, '');
-}
+function cleanUsername(value) { return String(value || '').trim().replace(/^@+/, '').replace(/[^a-zA-Z0-9._]/g, ''); }
 function loadUsername() {
-  try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      const name = cleanUsername(saved.username);
-      if (name) return name;
-    }
-  } catch (err) { console.warn('[AVISO] Erro lendo streamer.json:', err?.message || err); }
+  try { if (fs.existsSync(SETTINGS_FILE)) { const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')); const name = cleanUsername(saved.username); if (name) return name; } }
+  catch (err) { console.warn('[AVISO] Erro lendo streamer.json:', err?.message || err); }
   return cleanUsername(process.env.TIKTOK_USERNAME);
 }
-function saveUsername(name) {
-  try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ username: name }, null, 2)); }
-  catch (err) { console.warn('[AVISO] Nao consegui salvar o streamer:', err?.message || err); }
-}
+function saveUsername(name) { try { fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ username: name }, null, 2)); } catch (err) { console.warn('[AVISO] Nao consegui salvar o streamer:', err?.message || err); } }
 
 let username = loadUsername();
 let connection = null;
@@ -61,19 +51,13 @@ app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connecte
 app.post('/api/streamer', async (req, res) => {
   const requested = cleanUsername(req.body?.username);
   if (!requested || requested.length < 2) return res.status(400).json({ ok: false, error: 'Informe um @username valido.' });
-  username = requested;
-  state.username = username;
-  saveUsername(username);
-  resetState();
-  lastError = null;
+  username = requested; state.username = username; saveUsername(username); resetState(); lastError = null;
   if (!DEMO) { await disconnectCurrent(); connectLive(); }
   return res.json({ ok: true, username, message: 'Streamer alterado. Tentando conectar...' });
 });
-
 app.get('/reset', (req, res) => {
   if (!RESET_TOKEN || String(req.query.token || '') !== RESET_TOKEN) return res.status(403).json({ ok: false, error: 'Token de reset invalido.' });
-  resetState();
-  return res.json({ ok: true, message: 'Ranking zerado.' });
+  resetState(); return res.json({ ok: true, message: 'Ranking zerado.' });
 });
 
 const server = http.createServer(app);
@@ -92,8 +76,7 @@ function registerHearts(uniqueId, nickname, profilePicture, hearts) {
 }
 function resetState() {
   state.totalHearts=0; state.viewerCount=0; state.lastLikeAt=0; state.leaderboard.clear();
-  processedLikeIds.clear(); lastEvent=null; decodedEvents=0; likeEvents=0; lastLikeSource=null; lastLikeDebug=null;
-  broadcast();
+  processedLikeIds.clear(); lastEvent=null; decodedEvents=0; likeEvents=0; lastLikeSource=null; lastLikeDebug=null; broadcast();
 }
 function scheduleReconnect(delay = reconnectDelay) {
   if (reconnectTimer || connecting || !username || DEMO) return;
@@ -107,184 +90,59 @@ async function disconnectCurrent() {
   if (connection) { try { if (typeof connection.disconnect==='function') await connection.disconnect(); } catch (err) { console.warn('[AVISO] Erro desconectando:',err?.message||err); } }
   connection=null; state.connected=false;
 }
-
 async function refreshRoomStats() {
   if (!connection || !state.connected) return;
   try {
-    const roomInfo = await connection.fetchRoomInfo();
-    const stats = roomInfo?.stats || {};
+    const roomInfo = await connection.fetchRoomInfo(); const stats = roomInfo?.stats || {};
     const roomLikes = number(stats.like_count ?? stats.likeCount ?? roomInfo?.like_count ?? roomInfo?.likeCount, 0);
     const viewers = number(stats.total_user ?? stats.totalUser ?? stats.user_count, state.viewerCount);
-    if (roomLikes > state.totalHearts) {
-      console.log(`[STATS] TikTok informa ${roomLikes} likes totais.`);
-      state.totalHearts = roomLikes;
-    }
-    if (viewers > 0) state.viewerCount = viewers;
-    broadcast();
-  } catch (err) {
-    console.warn('[AVISO] Nao consegui atualizar estatisticas da sala:', err?.message || err);
-  }
+    if (roomLikes > state.totalHearts) state.totalHearts = roomLikes;
+    if (viewers > 0) state.viewerCount = viewers; broadcast();
+  } catch (err) { console.warn('[AVISO] Nao consegui atualizar estatisticas da sala:', err?.message || err); }
 }
-
-function firstObject(...values) {
-  return values.find(value => value && typeof value === 'object') || {};
-}
-
+function firstObject(...values) { return values.find(value => value && typeof value === 'object') || {}; }
 function extractLikeData(data) {
-  const candidates = [
-    data,
-    data?.data,
-    data?.likeMessage,
-    data?.like,
-    data?.message,
-    data?.message?.data,
-    data?.decodedData,
-    data?.decodedData?.data,
-  ];
-
-  const root = candidates.find(value => value && typeof value === 'object' && (
-    value.count !== undefined ||
-    value.likeCount !== undefined ||
-    value.like_count !== undefined ||
-    value.total !== undefined ||
-    value.totalLikeCount !== undefined ||
-    value.total_like_count !== undefined ||
-    value.user ||
-    value.uniqueId ||
-    value.displayId
-  )) || data || {};
-
-  const user = firstObject(
-    root?.user,
-    root?.data?.user,
-    data?.user,
-    data?.data?.user,
-    data?.likeMessage?.user,
-    data?.like?.user
-  );
-
-  const uniqueId = cleanUsername(
-    root?.uniqueId ?? root?.displayId ?? root?.unique_id ?? root?.userId ?? root?.idStr ?? root?.id ??
-    user?.uniqueId ?? user?.displayId ?? user?.display_id ?? user?.unique_id ?? user?.userId ?? user?.idStr ?? user?.id ??
-    data?.uniqueId ?? data?.displayId ?? data?.unique_id ?? data?.userId ?? data?.idStr
-  );
-
-  const nickname = String(
-    root?.nickname ?? root?.nickName ?? root?.userName ??
-    user?.nickname ?? user?.nickName ?? user?.displayName ??
-    data?.nickname ?? data?.nickName ?? uniqueId
-  ).trim();
-
-  const profilePicture = root?.profilePictureUrl ?? root?.profile_picture_url ?? user?.profilePictureUrl ?? user?.profile_picture_url ?? data?.profilePictureUrl ?? null;
-
-  // WebcastLikeMessage usa "count" e "total" no decoded protobuf.
-  // Algumas versoes do connector usam likeCount/totalLikeCount.
-  const hearts = number(
-    root?.count ?? root?.likeCount ?? root?.like_count ??
-    data?.count ?? data?.likeCount ?? data?.like_count,
-    0
-  );
-  const total = number(
-    root?.total ?? root?.totalLikeCount ?? root?.total_like_count ??
-    data?.total ?? data?.totalLikeCount ?? data?.total_like_count,
-    0
-  );
+  const candidates = [data,data?.data,data?.likeMessage,data?.like,data?.message,data?.message?.data,data?.decodedData,data?.decodedData?.data];
+  const root = candidates.find(value => value && typeof value === 'object' && (value.likeCount !== undefined || value.like_count !== undefined || value.totalLikeCount !== undefined || value.total_like_count !== undefined || value.count !== undefined || value.total !== undefined || value.user || value.uniqueId || value.displayId)) || data || {};
+  const user = firstObject(root?.user,root?.data?.user,data?.user,data?.data?.user,data?.likeMessage?.user,data?.like?.user);
+  const uniqueId = cleanUsername(root?.uniqueId ?? root?.displayId ?? root?.unique_id ?? root?.userId ?? root?.idStr ?? root?.id ?? user?.uniqueId ?? user?.displayId ?? user?.display_id ?? user?.unique_id ?? user?.userId ?? user?.idStr ?? user?.id ?? data?.uniqueId ?? data?.displayId ?? data?.unique_id ?? data?.userId ?? data?.idStr);
+  const nickname = String(root?.nickname ?? root?.nickName ?? root?.userName ?? user?.nickname ?? user?.nickName ?? user?.displayName ?? data?.nickname ?? data?.nickName ?? uniqueId).trim();
+  const profilePicture = root?.profilePictureUrl ?? root?.profile_picture_url ?? root?.profilePicture ?? user?.profilePictureUrl ?? user?.profile_picture_url ?? user?.avatarThumb ?? user?.avatarMedium ?? user?.avatarLarge ?? data?.profilePictureUrl ?? data?.profilePicture ?? null;
+  const hearts = number(root?.likeCount ?? root?.like_count ?? root?.count ?? data?.likeCount ?? data?.like_count ?? data?.count, 0);
+  const total = number(root?.totalLikeCount ?? root?.total_like_count ?? root?.total ?? data?.totalLikeCount ?? data?.total_like_count ?? data?.total, 0);
   const msgId = root?.msgId ?? root?.msg_id ?? root?.common?.msgId ?? root?.common?.msg_id ?? data?.msgId ?? data?.messageId ?? data?.common?.msgId;
-
   return { root, user, uniqueId, nickname, profilePicture, hearts, total, msgId };
 }
-
 function processLike(data, source='like') {
-  const extracted = extractLikeData(data);
-  const { root, user, uniqueId, nickname, profilePicture, hearts, total: totalFromTikTok, msgId } = extracted;
+  const extracted = extractLikeData(data); const {root,user,uniqueId,nickname,profilePicture,hearts,total:totalFromTikTok,msgId}=extracted;
   const dedupeKey = msgId ? `msg:${msgId}` : `${uniqueId}:${hearts}:${totalFromTikTok}`;
-
   if (processedLikeIds.has(dedupeKey)) return false;
-  if (processedLikeIds.size > 5000) processedLikeIds.clear();
-  processedLikeIds.add(dedupeKey);
-
-  lastLikeDebug = {
-    source,
-    rootKeys: Object.keys(root || {}).slice(0, 40),
-    userKeys: Object.keys(user || {}).slice(0, 40),
-    uniqueId: uniqueId || null,
-    nickname: nickname || null,
-    hearts,
-    totalLikeCount: totalFromTikTok,
-    msgId: msgId ? String(msgId) : null,
-  };
-
-  console.log(`[LIKE:${source}] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok} | rootKeys=${Object.keys(root||{}).join(',')} | userKeys=${Object.keys(user||{}).join(',')}`);
-  likeEvents++;
-  lastLikeSource=source;
-
-  if (totalFromTikTok > state.totalHearts) state.totalHearts = totalFromTikTok;
-
-  if (!uniqueId || hearts <= 0) {
-    broadcast();
-    return false;
-  }
-
-  registerHearts(uniqueId, nickname, profilePicture, hearts);
-  if (totalFromTikTok <= 0) state.totalHearts += hearts;
-  state.lastLikeAt = Date.now();
-  broadcast();
-  return true;
+  if (processedLikeIds.size > 5000) processedLikeIds.clear(); processedLikeIds.add(dedupeKey);
+  lastLikeDebug={source,rootKeys:Object.keys(root||{}).slice(0,40),userKeys:Object.keys(user||{}).slice(0,40),uniqueId:uniqueId||null,nickname:nickname||null,hearts,totalLikeCount:totalFromTikTok,msgId:msgId?String(msgId):null,profilePicture:profilePicture||null};
+  console.log(`[LIKE:${source}] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok} | avatar=${profilePicture?'yes':'no'}`);
+  likeEvents++; lastLikeSource=source;
+  if (totalFromTikTok > state.totalHearts) state.totalHearts=totalFromTikTok;
+  if (!uniqueId || hearts <= 0) { broadcast(); return false; }
+  registerHearts(uniqueId,nickname,profilePicture,hearts);
+  if (totalFromTikTok <= 0) state.totalHearts+=hearts;
+  state.lastLikeAt=Date.now(); broadcast(); return true;
 }
-
 async function connectLive() {
   if (DEMO || !username || connecting || state.connected) return;
   connecting=true; lastError=null; broadcast();
   try {
-    const options = EULER_API_KEY ? { signApiKey: EULER_API_KEY } : {};
-    connection = new TikTokLiveConnection(username, options);
-
-    connection.on(WebcastEvent.LIKE, data => processLike(data, 'LIKE'));
-    connection.on('decodedData', (eventName, data) => {
-      decodedEvents++;
-      lastEvent=String(eventName || 'unknown');
-      if (String(eventName || '').toLowerCase() === 'like' || String(eventName || '').toLowerCase().includes('like')) {
-        processLike(data, 'DECODED');
-      }
-      if (decodedEvents % 20 === 0) broadcast();
-    });
-    connection.on('rawData', (messageTypeName) => {
-      lastEvent=String(messageTypeName || 'unknown');
-      if (String(messageTypeName || '').toLowerCase().includes('like')) console.log(`[RAW LIKE] ${messageTypeName}`);
-    });
-    connection.on('websocketConnected', () => console.log('[OK] WebSocket TikTok aberto.'));
-    connection.on(WebcastEvent.ROOM_USER, data => { state.viewerCount=number(data?.viewerCount ?? data?.userCount ?? data?.memberCount,state.viewerCount); broadcast(); });
-    connection.on('disconnected', ({code,reason}={}) => {
-      state.connected=false;
-      if (statsTimer) { clearInterval(statsTimer); statsTimer=null; }
-      lastError=`Desconectado${code?` (${code})`:''}${reason?`: ${reason}`:''}`;
-      console.warn('[AVISO]',lastError); broadcast(); scheduleReconnect();
-    });
-    connection.on('error', err => { lastError=err?.message||String(err); console.error('[ERRO TikTok]',lastError); broadcast(); });
-
-    console.log(`[INFO] Procurando a live de @${username}...`);
-    const live = await connection.fetchIsLive();
-    console.log(`[INFO] fetchIsLive @${username}: ${live}`);
-    if (!live) throw new Error(`@${username} nao parece estar ao vivo para o TikTok neste momento. Abra a live no TikTok e tente novamente.`);
-
-    const result=await connection.connect();
-    state.connected=true; state.username=username; reconnectDelay=5000; lastError=null;
-    console.log(`[OK] Conectado em @${username}. roomId=${result.roomId}`);
-    await refreshRoomStats();
-    statsTimer = setInterval(refreshRoomStats, 10000);
-    broadcast();
-  } catch(err) {
-    state.connected=false;
-    if (statsTimer) { clearInterval(statsTimer); statsTimer=null; }
-    lastError=err?.message||String(err);
-    console.error(`[FALHA] @${username}: ${lastError}`); broadcast(); scheduleReconnect();
-  } finally { connecting=false; }
+    const options=EULER_API_KEY?{signApiKey:EULER_API_KEY}:{}; connection=new TikTokLiveConnection(username,options);
+    connection.on(WebcastEvent.LIKE,data=>processLike(data,'LIKE'));
+    connection.on('decodedData',(eventName,data)=>{ decodedEvents++; lastEvent=String(eventName||'unknown'); if(String(eventName||'').toLowerCase().includes('like')) processLike(data,'DECODED'); if(decodedEvents%20===0) broadcast(); });
+    connection.on('rawData',messageTypeName=>{ lastEvent=String(messageTypeName||'unknown'); if(String(messageTypeName||'').toLowerCase().includes('like')) console.log(`[RAW LIKE] ${messageTypeName}`); });
+    connection.on('websocketConnected',()=>console.log('[OK] WebSocket TikTok aberto.'));
+    connection.on(WebcastEvent.ROOM_USER,data=>{state.viewerCount=number(data?.viewerCount??data?.userCount??data?.memberCount,state.viewerCount);broadcast();});
+    connection.on('disconnected',({code,reason}={})=>{state.connected=false;if(statsTimer){clearInterval(statsTimer);statsTimer=null;}lastError=`Desconectado${code?` (${code})`:''}${reason?`: ${reason}`:''}`;console.warn('[AVISO]',lastError);broadcast();scheduleReconnect();});
+    connection.on('error',err=>{lastError=err?.message||String(err);console.error('[ERRO TikTok]',lastError);broadcast();});
+    console.log(`[INFO] Procurando a live de @${username}...`); const live=await connection.fetchIsLive(); console.log(`[INFO] fetchIsLive @${username}: ${live}`); if(!live) throw new Error(`@${username} nao parece estar ao vivo para o TikTok neste momento. Abra a live no TikTok e tente novamente.`);
+    const result=await connection.connect(); state.connected=true; state.username=username; reconnectDelay=5000; lastError=null; console.log(`[OK] Conectado em @${username}. roomId=${result.roomId}`); await refreshRoomStats(); statsTimer=setInterval(refreshRoomStats,10000); broadcast();
+  } catch(err) { state.connected=false;if(statsTimer){clearInterval(statsTimer);statsTimer=null;}lastError=err?.message||String(err);console.error(`[FALHA] @${username}: ${lastError}`);broadcast();scheduleReconnect(); } finally { connecting=false; }
 }
-
 io.on('connection',socket=>socket.emit('state',snapshot()));
-function startDemo() {
-  state.connected=true; state.username='modo-demo';
-  const users=[['ana.streams','Ana'],['joao_rj','Joao RJ'],['bia.gamer','Bia Gamer'],['pedro99','Pedro'],['lu_fofa','Lu']];
-  setInterval(()=>{ const [id,nick]=users[Math.floor(Math.random()*users.length)]; const hearts=Math.floor(Math.random()*35)+1; state.totalHearts+=hearts; state.lastLikeAt=Date.now(); registerHearts(id,nick,null,hearts); broadcast(); },900); broadcast();
-}
-server.listen(PORT,'0.0.0.0',()=>{ console.log(`[OK] Overlay rodando na porta ${PORT}`); if(DEMO) startDemo(); else connectLive(); });
+function startDemo(){state.connected=true;state.username='modo-demo';const users=[['ana.streams','Ana'],['joao_rj','Joao RJ'],['bia.gamer','Bia Gamer'],['pedro99','Pedro'],['lu_fofa','Lu']];setInterval(()=>{const[id,nick]=users[Math.floor(Math.random()*users.length)];const hearts=Math.floor(Math.random()*35)+1;state.totalHearts+=hearts;state.lastLikeAt=Date.now();registerHearts(id,nick,null,hearts);broadcast();},900);broadcast();}
+server.listen(PORT,'0.0.0.0',()=>{console.log(`[OK] Overlay rodando na porta ${PORT}`);if(DEMO)startDemo();else connectLive();});
