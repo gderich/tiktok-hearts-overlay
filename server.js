@@ -37,6 +37,7 @@ function saveUsername(name) {
 let username = loadUsername();
 let connection = null;
 let reconnectTimer = null;
+let statsTimer = null;
 let connecting = false;
 let reconnectDelay = 5000;
 let lastError = null;
@@ -49,7 +50,7 @@ app.use(express.static(path.join(__dirname, 'public'), { extensions: ['html'] })
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'overlay.html')));
 app.get('/settings', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'settings.html')));
 app.get('/api/config', (_req, res) => res.json({ username, connected: state.connected, demo: DEMO, hasEulerApiKey: Boolean(EULER_API_KEY), lastError }));
-app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastError }));
+app.get('/health', (_req, res) => res.json({ ok: true, connected: state.connected, username, totalHearts: state.totalHearts, users: state.leaderboard.size, lastLikeAt: state.lastLikeAt, lastError }));
 
 app.post('/api/streamer', async (req, res) => {
   const requested = cleanUsername(req.body?.username);
@@ -92,8 +93,27 @@ function scheduleReconnect(delay = reconnectDelay) {
 }
 async function disconnectCurrent() {
   if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer=null; }
+  if (statsTimer) { clearInterval(statsTimer); statsTimer=null; }
   if (connection) { try { if (typeof connection.disconnect==='function') await connection.disconnect(); } catch (err) { console.warn('[AVISO] Erro desconectando:',err?.message||err); } }
   connection=null; state.connected=false;
+}
+
+async function refreshRoomStats() {
+  if (!connection || !state.connected) return;
+  try {
+    const roomInfo = await connection.fetchRoomInfo();
+    const stats = roomInfo?.stats || {};
+    const roomLikes = number(stats.like_count, 0);
+    const viewers = number(stats.total_user, state.viewerCount);
+    if (roomLikes > state.totalHearts) {
+      console.log(`[STATS] TikTok informa ${roomLikes} likes totais.`);
+      state.totalHearts = roomLikes;
+    }
+    if (viewers > 0) state.viewerCount = viewers;
+    broadcast();
+  } catch (err) {
+    console.warn('[AVISO] Nao consegui atualizar estatisticas da sala:', err?.message || err);
+  }
 }
 
 async function connectLive() {
@@ -102,21 +122,25 @@ async function connectLive() {
   try {
     const options = EULER_API_KEY ? { signApiKey: EULER_API_KEY } : {};
     connection = new TikTokLiveConnection(username, options);
+
     connection.on(WebcastEvent.LIKE, data => {
-      const uniqueId=data?.uniqueId || data?.user?.uniqueId;
-      const nickname=data?.nickname || data?.user?.nickname || uniqueId;
-      const profilePicture=data?.profilePictureUrl || data?.user?.profilePictureUrl || null;
-      const hearts=number(data?.likeCount,0);
-      const totalFromTikTok=number(data?.totalLikeCount,0);
+      const uniqueId=data?.uniqueId || data?.user?.uniqueId || data?.user?.user?.uniqueId;
+      const nickname=data?.nickname || data?.user?.nickname || data?.user?.user?.nickname || uniqueId;
+      const profilePicture=data?.profilePictureUrl || data?.user?.profilePictureUrl || data?.user?.user?.profilePictureUrl || null;
+      const hearts=number(data?.likeCount ?? data?.user?.likeCount ?? data?.user?.user?.likeCount,0);
+      const totalFromTikTok=number(data?.totalLikeCount ?? data?.user?.totalLikeCount,0);
       console.log(`[LIKE] ${uniqueId||'?'} +${hearts} | total=${totalFromTikTok}`);
       if (!uniqueId || hearts<=0) return;
       registerHearts(uniqueId,nickname,profilePicture,hearts);
       state.totalHearts=totalFromTikTok>0?Math.max(state.totalHearts,totalFromTikTok):state.totalHearts+hearts;
-      state.lastLikeAt=Date.now(); broadcast();
+      state.lastLikeAt=Date.now();
+      broadcast();
     });
+
     connection.on(WebcastEvent.ROOM_USER, data => { state.viewerCount=number(data?.viewerCount,state.viewerCount); broadcast(); });
     connection.on('disconnected', ({code,reason}={}) => {
       state.connected=false;
+      if (statsTimer) { clearInterval(statsTimer); statsTimer=null; }
       lastError=`Desconectado${code?` (${code})`:''}${reason?`: ${reason}`:''}`;
       console.warn('[AVISO]',lastError); broadcast(); scheduleReconnect();
     });
@@ -131,9 +155,13 @@ async function connectLive() {
 
     const result=await connection.connect();
     state.connected=true; state.username=username; reconnectDelay=5000; lastError=null;
-    console.log(`[OK] Conectado em @${username}. roomId=${result.roomId}`); broadcast();
+    console.log(`[OK] Conectado em @${username}. roomId=${result.roomId}`);
+    await refreshRoomStats();
+    statsTimer = setInterval(refreshRoomStats, 10000);
+    broadcast();
   } catch(err) {
     state.connected=false;
+    if (statsTimer) { clearInterval(statsTimer); statsTimer=null; }
     lastError=err?.message||String(err);
     console.error(`[FALHA] @${username}: ${lastError}`); broadcast(); scheduleReconnect();
   } finally { connecting=false; }
