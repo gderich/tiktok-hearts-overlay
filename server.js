@@ -143,8 +143,10 @@ function extractLikeData(data) {
   ];
 
   const root = candidates.find(value => value && typeof value === 'object' && (
+    value.count !== undefined ||
     value.likeCount !== undefined ||
     value.like_count !== undefined ||
+    value.total !== undefined ||
     value.totalLikeCount !== undefined ||
     value.total_like_count !== undefined ||
     value.user ||
@@ -174,8 +176,19 @@ function extractLikeData(data) {
   ).trim();
 
   const profilePicture = root?.profilePictureUrl ?? root?.profile_picture_url ?? user?.profilePictureUrl ?? user?.profile_picture_url ?? data?.profilePictureUrl ?? null;
-  const hearts = number(root?.likeCount ?? root?.like_count ?? data?.likeCount ?? data?.like_count, 0);
-  const total = number(root?.totalLikeCount ?? root?.total_like_count ?? data?.totalLikeCount ?? data?.total_like_count, 0);
+
+  // WebcastLikeMessage usa "count" e "total" no decoded protobuf.
+  // Algumas versoes do connector usam likeCount/totalLikeCount.
+  const hearts = number(
+    root?.count ?? root?.likeCount ?? root?.like_count ??
+    data?.count ?? data?.likeCount ?? data?.like_count,
+    0
+  );
+  const total = number(
+    root?.total ?? root?.totalLikeCount ?? root?.total_like_count ??
+    data?.total ?? data?.totalLikeCount ?? data?.total_like_count,
+    0
+  );
   const msgId = root?.msgId ?? root?.msg_id ?? root?.common?.msgId ?? root?.common?.msg_id ?? data?.msgId ?? data?.messageId ?? data?.common?.msgId;
 
   return { root, user, uniqueId, nickname, profilePicture, hearts, total, msgId };
